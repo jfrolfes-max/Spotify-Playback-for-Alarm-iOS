@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spotify Autoplay Alarm for iOS</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #0f1419; color: #e6e8eb; }
+    main { max-width: 900px; margin: 0 auto; padding: 24px; }
+    h1, h2 { color: #1db954; }
+    .card { background: #161b22; border: 1px solid #272c34; border-radius: 14px; padding: 20px; margin-bottom: 20px; }
+    label { display: block; margin-top: 14px; font-size: 0.95rem; }
+    input, textarea, select { width: 100%; padding: 10px; margin-top: 6px; background: #0f1419; border: 1px solid #272c34; border-radius: 8px; color: #e6e8eb; }
+    button { background: #1db954; border: none; color: #fff; padding: 12px 18px; border-radius: 10px; cursor: pointer; margin-top: 14px; }
+    button:hover { opacity: 0.95; }
+    .row { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; }
+    .small { font-size: 0.9rem; color: #8f9bb3; margin-top: 8px; }
+    .status { padding: 14px 16px; border-radius: 12px; background: #11171d; margin-top: 10px; }
+    textarea { min-height: 90px; resize: vertical; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Spotify Autoplay Alarm for iOS</h1>
+    <p>Configure your Spotify client, authorize the app, and trigger playback on an iOS device.</p>
+
+    <section class="card">
+      <h2>Spotify Credentials</h2>
+      <label>Client ID<input id="clientId" type="text" placeholder="Spotify Client ID"></label>
+      <label>Client Secret<input id="clientSecret" type="password" placeholder="Spotify Client Secret"></label>
+      <button id="saveCredentials">Save credentials</button>
+      <button id="authorizeButton">Authorize with Spotify</button>
+      <div class="status" id="authStatus"></div>
+    </section>
+
+    <section class="card">
+      <h2>Alarm Preferences</h2>
+      <label>Target device ID<input id="deviceId" type="text" placeholder="Device ID (optional)"></label>
+      <label>Target device name<input id="deviceName" type="text" placeholder="Device Name (optional)"></label>
+      <label>Playlist / album URI<input id="contextUri" type="text" placeholder="spotify:playlist:... or spotify:album:..."></label>
+      <label>Track URIs (comma-separated)<textarea id="trackUris" placeholder="spotify:track:...,spotify:track:..."></textarea></label>
+      <div class="row">
+        <label>Start time<input id="startTime" type="time"></label>
+        <label>Volume<input id="volumePercent" type="number" min="0" max="100"></label>
+      </div>
+      <label><input id="shuffle" type="checkbox"> Enable shuffle</label>
+      <button id="saveAlarm">Save alarm preferences</button>
+      <div class="status" id="alarmStatus"></div>
+    </section>
+
+    <section class="card">
+      <h2>Playback Control</h2>
+      <button id="listDevices">List Spotify devices</button>
+      <div class="status" id="deviceStatus"></div>
+      <button id="playNow">Trigger playback now</button>
+      <div class="status" id="playStatus"></div>
+    </section>
+  </main>
+
+  <script>
+    const authStatus = document.getElementById('authStatus');
+    const alarmStatus = document.getElementById('alarmStatus');
+    const deviceStatus = document.getElementById('deviceStatus');
+    const playStatus = document.getElementById('playStatus');
+
+    const fields = ['clientId', 'clientSecret', 'deviceId', 'deviceName', 'contextUri', 'trackUris', 'startTime', 'volumePercent'];
+    const state = {};
+
+    async function fetchStatus() {
+      const response = await fetch('/api/status');
+      return response.json();
+    }
+
+    async function loadConfig() {
+      const status = await fetchStatus();
+      const config = status.config || {};
+      document.getElementById('clientId').value = config.clientId || '';
+      document.getElementById('clientSecret').value = config.clientSecret || '';
+      document.getElementById('deviceId').value = config.alarm.deviceId || '';
+      document.getElementById('deviceName').value = config.alarm.deviceName || '';
+      document.getElementById('contextUri').value = config.alarm.contextUri || '';
+      document.getElementById('trackUris').value = config.alarm.trackUris || '';
+      document.getElementById('startTime').value = config.alarm.startTime || '';
+      document.getElementById('volumePercent').value = config.alarm.volumePercent || 80;
+      document.getElementById('shuffle').checked = config.alarm.shuffle || false;
+      authStatus.textContent = status.hasTokens ? 'Spotify authorized.' : 'Spotify not authorized yet.';
+    }
+
+    async function saveCredentials() {
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: document.getElementById('clientId').value.trim(),
+          clientSecret: document.getElementById('clientSecret').value.trim()
+        })
+      });
+      authStatus.textContent = 'Credentials saved. Authorize with Spotify next.';
+    }
+
+    async function authorizeSpotify() {
+      const response = await fetch('/api/authorize');
+      const result = await response.json();
+      if (result.url) {
+        window.open(result.url, '_blank');
+      } else {
+        authStatus.textContent = 'Unable to start authorization.';
+      }
+    }
+
+    async function saveAlarmPreferences() {
+      await fetch('/api/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: document.getElementById('deviceId').value.trim(),
+          deviceName: document.getElementById('deviceName').value.trim(),
+          contextUri: document.getElementById('contextUri').value.trim(),
+          trackUris: document.getElementById('trackUris').value.trim(),
+          startTime: document.getElementById('startTime').value,
+          volumePercent: Number(document.getElementById('volumePercent').value),
+          shuffle: document.getElementById('shuffle').checked
+        })
+      });
+      alarmStatus.textContent = 'Alarm preferences saved.';
+    }
+
+    async function listDevices() {
+      const response = await fetch('/api/devices');
+      const result = await response.json();
+      if (result.devices) {
+        deviceStatus.innerHTML = '<strong>Available devices:</strong><br>' + result.devices.map(d => `${d.name} (${d.id}) ${d.is_active ? '(active)' : ''}`).join('<br>');
+      } else {
+        deviceStatus.textContent = JSON.stringify(result, null, 2);
+      }
+    }
+
+    async function playNow() {
+      const body = {
+        deviceId: document.getElementById('deviceId').value.trim(),
+        contextUri: document.getElementById('contextUri').value.trim(),
+        trackUris: document.getElementById('trackUris').value.trim(),
+        volumePercent: Number(document.getElementById('volumePercent').value),
+        shuffle: document.getElementById('shuffle').checked
+      };
+      const response = await fetch('/api/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const result = await response.json();
+      if (result.success) {
+        playStatus.textContent = 'Playback triggered successfully.';
+      } else {
+        playStatus.textContent = 'Error: ' + (result.error ? JSON.stringify(result.error) : 'Unknown error');
+      }
+    }
+
+    document.getElementById('saveCredentials').addEventListener('click', saveCredentials);
+    document.getElementById('authorizeButton').addEventListener('click', authorizeSpotify);
+    document.getElementById('saveAlarm').addEventListener('click', saveAlarmPreferences);
+    document.getElementById('listDevices').addEventListener('click', listDevices);
+    document.getElementById('playNow').addEventListener('click', playNow);
+
+    loadConfig();
+  </script>
+</body>
+</html>

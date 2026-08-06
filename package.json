@@ -1,0 +1,19 @@
+{
+  "name": "spotify-autoplay-alarm-ios",
+  "version": "0.1.0",
+  "description": "Local website and helper apps to trigger Spotify playback on iOS devices based on alarm preferences.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.6",
+    "body-parser": "^1.20.3",
+    "cookie-parser": "^1.4.6",
+    "express": "^4.18.4"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
