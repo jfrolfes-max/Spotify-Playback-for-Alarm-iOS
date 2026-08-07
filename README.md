@@ -4,7 +4,8 @@ Heads up, Spotify's background playback restrictions are pretty strict.
 
 # Spotify-Autoplay-for-Alarm-iOS
 
-This repo hosts a local website and helper apps for connecting to Spotify, saving alarm preferences, and triggering playback on an iOS device.
+This repo houses server infrastructure and web/helper app for pushing playback to an iOS device based on some user-set alarm preferences.
+
 
 ## Features
 
