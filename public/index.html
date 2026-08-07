@@ -41,7 +41,6 @@
       <label>Track URIs (comma-separated)<textarea id="trackUris" placeholder="spotify:track:...,spotify:track:..."></textarea></label>
       <div class="row">
         <label>Start time<input id="startTime" type="time"></label>
-        <label>Volume<input id="volumePercent" type="number" min="0" max="100"></label>
       </div>
       <label><input id="shuffle" type="checkbox"> Enable shuffle</label>
       <button id="saveAlarm">Save alarm preferences</button>
@@ -81,7 +80,6 @@
       document.getElementById('contextUri').value = config.alarm.contextUri || '';
       document.getElementById('trackUris').value = config.alarm.trackUris || '';
       document.getElementById('startTime').value = config.alarm.startTime || '';
-      document.getElementById('volumePercent').value = config.alarm.volumePercent || 80;
       document.getElementById('shuffle').checked = config.alarm.shuffle || false;
       authStatus.textContent = status.hasTokens ? 'Spotify authorized.' : 'Spotify not authorized yet.';
     }
@@ -118,7 +116,6 @@
           contextUri: document.getElementById('contextUri').value.trim(),
           trackUris: document.getElementById('trackUris').value.trim(),
           startTime: document.getElementById('startTime').value,
-          volumePercent: Number(document.getElementById('volumePercent').value),
           shuffle: document.getElementById('shuffle').checked
         })
       });
@@ -140,7 +137,6 @@
         deviceId: document.getElementById('deviceId').value.trim(),
         contextUri: document.getElementById('contextUri').value.trim(),
         trackUris: document.getElementById('trackUris').value.trim(),
-        volumePercent: Number(document.getElementById('volumePercent').value),
         shuffle: document.getElementById('shuffle').checked
       };
       const response = await fetch('/api/play', {

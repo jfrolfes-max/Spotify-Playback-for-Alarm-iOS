@@ -275,13 +275,9 @@ app.post('/api/play', async (req, res) => {
   const deviceId = body.deviceId || config.alarm.deviceId;
   const contextUri = body.contextUri || config.alarm.contextUri;
   const trackUris = body.trackUris ? body.trackUris.split(',').map((uri) => uri.trim()).filter(Boolean) : (config.alarm.trackUris ? config.alarm.trackUris.split(',').map((uri) => uri.trim()).filter(Boolean) : []);
-  const volume = Number(body.volumePercent ?? config.alarm.volumePercent ?? 80);
   const shuffle = body.shuffle ?? config.alarm.shuffle ?? false;
 
   try {
-    if (deviceId) {
-      await spotifyRequest('PUT', `https://api.spotify.com/v1/me/player/volume?device_id=${encodeURIComponent(deviceId)}`, { data: null });
-    }
     if (typeof shuffle === 'boolean') {
       await spotifyRequest('PUT', `https://api.spotify.com/v1/me/player/shuffle?state=${shuffle}`, { data: null });
     }
@@ -300,7 +296,7 @@ app.post('/api/play', async (req, res) => {
       data: Object.keys(playBody).length ? playBody : null
     });
 
-    res.json({ success: true, deviceId, contextUri, trackUris, volume, shuffle });
+    res.json({ success: true, deviceId, contextUri, trackUris, shuffle });
   } catch (error) {
     const message = error.response?.data || error.message;
     res.status(500).json({ error: message });
