@@ -20,6 +20,7 @@ const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
 
 const KEEPALIVE_INTERVAL_MS = 60 * 1000;
+const MOUNTAIN_TIME_ZONE = 'America/Denver';
 
 const DEFAULT_CONFIG = {
   clientId: '',
@@ -44,6 +45,8 @@ let tokens = {
   expiresAt: 0
 };
 let activeDeviceId = '';
+let alarmTimer = null;
+let alarmTriggerInProgress = false;
 const outstandingStates = new Set();
 
 async function ensureStorage() {
@@ -122,6 +125,77 @@ async function ensureCerts() {
   }
 
   return loadCertFiles();
+}
+
+function getMountainTimeParts(date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: MOUNTAIN_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(date);
+}
+
+function getMountainTimeValue(parts, type) {
+  return Number(parts.find((part) => part.type === type)?.value || 0);
+}
+
+function getUtcForMountainTime(year, month, day, hour, minute) {
+  const base = Date.UTC(year, month - 1, day, hour, minute, 0);
+  const candidate = new Date(base);
+
+  for (let offsetHours = -24; offsetHours <= 24; offsetHours += 1) {
+    const testDate = new Date(candidate.getTime() + offsetHours * 60 * 60 * 1000);
+    const parts = getMountainTimeParts(testDate);
+    const testYear = getMountainTimeValue(parts, 'year');
+    const testMonth = getMountainTimeValue(parts, 'month');
+    const testDay = getMountainTimeValue(parts, 'day');
+    const testHour = getMountainTimeValue(parts, 'hour');
+    const testMinute = getMountainTimeValue(parts, 'minute');
+
+    if (testYear === year && testMonth === month && testDay === day && testHour === hour && testMinute === minute) {
+      return testDate;
+    }
+  }
+
+  return candidate;
+}
+
+function getNextAlarmOccurrence(startTime, now = new Date()) {
+  if (!startTime) {
+    return null;
+  }
+
+  const [hoursRaw, minutesRaw] = startTime.split(':');
+  const hours = Number.parseInt(hoursRaw, 10);
+  const minutes = Number.parseInt(minutesRaw, 10);
+
+  if (Number.isNaN(hours) || Number.isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  const currentParts = getMountainTimeParts(now);
+  const currentYear = getMountainTimeValue(currentParts, 'year');
+  const currentMonth = getMountainTimeValue(currentParts, 'month');
+  const currentDay = getMountainTimeValue(currentParts, 'day');
+
+  for (let dayOffset = 0; dayOffset < 8; dayOffset += 1) {
+    const targetDate = new Date(Date.UTC(currentYear, currentMonth - 1, currentDay + dayOffset));
+    const targetYear = targetDate.getUTCFullYear();
+    const targetMonth = targetDate.getUTCMonth() + 1;
+    const targetDay = targetDate.getUTCDate();
+    const candidate = getUtcForMountainTime(targetYear, targetMonth, targetDay, hours, minutes);
+
+    if (candidate.getTime() > now.getTime()) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function buildAuthUrl() {
@@ -217,6 +291,103 @@ function startDeviceKeepalive() {
   }, KEEPALIVE_INTERVAL_MS);
 }
 
+function clearAlarmTimer() {
+  if (alarmTimer) {
+    clearTimeout(alarmTimer);
+    alarmTimer = null;
+  }
+}
+
+async function performPlayback(body = {}) {
+  const requestedDeviceId = body.deviceId || config.alarm.deviceId;
+  const contextUri = body.contextUri || config.alarm.contextUri;
+  const trackUris = body.trackUris ? body.trackUris.split(',').map((uri) => uri.trim()).filter(Boolean) : (config.alarm.trackUris ? config.alarm.trackUris.split(',').map((uri) => uri.trim()).filter(Boolean) : []);
+  const shuffle = body.shuffle ?? config.alarm.shuffle ?? false;
+
+  await refreshActiveDevice();
+  const deviceId = resolvePlaybackDeviceId(requestedDeviceId);
+
+  if (typeof shuffle === 'boolean') {
+    const shuffleParams = new URLSearchParams({ state: String(shuffle) });
+    if (deviceId) {
+      shuffleParams.set('device_id', deviceId);
+    }
+    await spotifyRequest('PUT', `https://api.spotify.com/v1/me/player/shuffle?${shuffleParams.toString()}`, { data: null });
+  }
+
+  const playBody = {};
+  if (contextUri) {
+    playBody.context_uri = contextUri;
+    if (trackUris.length > 0) {
+      playBody.offset = { uri: trackUris[0] };
+    }
+  } else if (trackUris.length > 0) {
+    playBody.uris = trackUris;
+  }
+
+  await spotifyRequest('PUT', `https://api.spotify.com/v1/me/player/play?${deviceId ? `device_id=${encodeURIComponent(deviceId)}` : ''}`, {
+    data: Object.keys(playBody).length ? playBody : null
+  });
+
+  return { success: true, deviceId, contextUri, trackUris, shuffle };
+}
+
+function scheduleAlarmFromConfig() {
+  clearAlarmTimer();
+
+  const alarm = config.alarm || {};
+  if (!alarm.startTime) {
+    return;
+  }
+
+  const nextAlarmAt = getNextAlarmOccurrence(alarm.startTime, new Date());
+  if (!nextAlarmAt) {
+    config.alarm.nextAlarmAt = null;
+    saveJson(CONFIG_FILE, config).catch(() => {});
+    return;
+  }
+
+  config.alarm.nextAlarmAt = nextAlarmAt.toISOString();
+  saveJson(CONFIG_FILE, config).catch(() => {});
+
+  const delay = nextAlarmAt.getTime() - Date.now();
+  if (delay <= 0) {
+    triggerAlarmPlayback().catch((error) => {
+      console.error('Failed to trigger alarm immediately:', error);
+    });
+    return;
+  }
+
+  alarmTimer = setTimeout(() => {
+    alarmTimer = null;
+    triggerAlarmPlayback().catch((error) => {
+      console.error('Failed to trigger scheduled alarm:', error);
+    });
+  }, delay);
+}
+
+async function triggerAlarmPlayback() {
+  if (alarmTriggerInProgress) {
+    return;
+  }
+
+  alarmTriggerInProgress = true;
+
+  try {
+    await performPlayback({
+      deviceId: config.alarm.deviceId,
+      contextUri: config.alarm.contextUri,
+      trackUris: config.alarm.trackUris,
+      shuffle: config.alarm.shuffle
+    });
+  } catch (error) {
+    console.error('Alarm playback failed:', error.response?.data || error.message);
+  } finally {
+    alarmTriggerInProgress = false;
+    scheduleAlarmFromConfig();
+  }
+}
+
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -306,39 +477,9 @@ app.get('/api/devices', async (req, res) => {
 });
 
 app.post('/api/play', async (req, res) => {
-  const body = req.body || {};
-  const requestedDeviceId = body.deviceId || config.alarm.deviceId;
-  const contextUri = body.contextUri || config.alarm.contextUri;
-  const trackUris = body.trackUris ? body.trackUris.split(',').map((uri) => uri.trim()).filter(Boolean) : (config.alarm.trackUris ? config.alarm.trackUris.split(',').map((uri) => uri.trim()).filter(Boolean) : []);
-  const shuffle = body.shuffle ?? config.alarm.shuffle ?? false;
-
   try {
-    await refreshActiveDevice();
-    const deviceId = resolvePlaybackDeviceId(requestedDeviceId);
-
-    if (typeof shuffle === 'boolean') {
-      const shuffleParams = new URLSearchParams({ state: String(shuffle) });
-      if (deviceId) {
-        shuffleParams.set('device_id', deviceId);
-      }
-      await spotifyRequest('PUT', `https://api.spotify.com/v1/me/player/shuffle?${shuffleParams.toString()}`, { data: null });
-    }
-
-    const playBody = {};
-    if (contextUri) {
-      playBody.context_uri = contextUri;
-      if (trackUris.length > 0) {
-        playBody.offset = { uri: trackUris[0] };
-      }
-    } else if (trackUris.length > 0) {
-      playBody.uris = trackUris;
-    }
-
-    await spotifyRequest('PUT', `https://api.spotify.com/v1/me/player/play?${deviceId ? `device_id=${encodeURIComponent(deviceId)}` : ''}`, {
-      data: Object.keys(playBody).length ? playBody : null
-    });
-
-    res.json({ success: true, deviceId, contextUri, trackUris, shuffle });
+    const result = await performPlayback(req.body || {});
+    res.json(result);
   } catch (error) {
     const message = error.response?.data || error.message;
     res.status(500).json({ error: message });
@@ -347,11 +488,15 @@ app.post('/api/play', async (req, res) => {
 
 app.post('/api/schedule', async (req, res) => {
   const alarm = req.body || {};
+  const nextAlarmAt = getNextAlarmOccurrence(alarm.startTime || config.alarm.startTime);
   config.alarm = {
     ...config.alarm,
-    ...alarm
+    ...alarm,
+    timezone: MOUNTAIN_TIME_ZONE,
+    nextAlarmAt: nextAlarmAt ? nextAlarmAt.toISOString() : null
   };
   await saveJson(CONFIG_FILE, config);
+  scheduleAlarmFromConfig();
   res.json({ success: true, alarm: config.alarm });
 });
 
@@ -362,6 +507,7 @@ app.get('*', (req, res) => {
 loadState().then(async () => {
   const { key, cert } = await ensureCerts();
   startDeviceKeepalive();
+  scheduleAlarmFromConfig();
 
   http.createServer(app).listen(HTTP_PORT, HOST, () => {
     console.log(`Server running at http://127.0.0.1:${HTTP_PORT} (bound to ${HOST})`);
