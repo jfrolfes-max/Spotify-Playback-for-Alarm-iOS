@@ -99,7 +99,9 @@ npm start
 
 ## Python helper
 
-The `spotify_playback_helper.py` script reads saved preferences from `data/config.json` and triggers playback using Spotify Web API.
+The `spotify_playback_helper.py` script reads saved preferences from `data/config.json` and triggers playback using Spotify Web API. Obviously, it's not worth it keeping the server up if you're just using this for yourself. I only made the server thinking this could be a popular app, but the stale background playback issues threw a wrench in that idea.
+
+Honestly, just make a JSON file called data/config and run the playback helper without ever having to start the server.
 
 Run it with:
 
@@ -116,6 +118,6 @@ Use this helper if you want to add a cron job or iOS integration outside the web
 
 ## Notes
 
-- Spotify playback control requires the target iOS device to be active in the user's Spotify session.
+--> --> Spotify playback control requires the target iOS device to be active in the user's Spotify session.<-- <--
 - The website uses the Spotify authorization code flow to obtain a refresh token.
 - If you want to reuse token data, copy `config.example.json` into `data/config.json` and fill in your values.
