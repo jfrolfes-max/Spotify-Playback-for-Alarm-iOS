@@ -44,6 +44,54 @@ https://127.0.0.1:3000
 - `Volume`
 - `Shuffle`
 
+## Codespaces usage
+
+When running inside GitHub Codespaces, the app is not reachable at `127.0.0.1` from your browser. Use the Codespace public URL for the website and the Spotify callback instead.
+
+1. Forward port `3000` publicly:
+
+```bash
+gh codespace ports visibility 3000:public --codespace <your-codespace-name>
+```
+
+2. Find the public browse URL:
+
+```bash
+gh codespace ports --codespace <your-codespace-name> --json browseUrl,sourcePort
+```
+
+Look for the entry with `sourcePort: 3000`. It should look like:
+
+```text
+https://<your-codespace-name>-3000.app.github.dev
+```
+
+3. Update `data/config.json` so the redirect URI matches the public URL:
+
+```json
+{
+  "redirectUri": "https://<your-codespace-name>-3000.app.github.dev/callback"
+}
+```
+
+4. In the Spotify Developer Dashboard, add the same redirect URI:
+
+```text
+https://<your-codespace-name>-3000.app.github.dev/callback
+```
+
+5. Start the app:
+
+```bash
+npm start
+```
+
+6. Open the public Codespace URL in your browser and use the website from there.
+
+7. Click `Authorize with Spotify` and complete authorization.
+
+> Tip: the public Codespace URL may change if the Codespace is recreated, so repeat steps 1–3 when that happens.
+
 ## Python helper
 
 The `spotify_playback_helper.py` script reads saved preferences from `data/config.json` and triggers playback using Spotify Web API.
