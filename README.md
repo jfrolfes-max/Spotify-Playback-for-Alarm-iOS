@@ -26,10 +26,12 @@ npm start
 3. Open your browser at:
 
 ```text
-http://localhost:3000
+https://127.0.0.1:3000
 ```
 
 4. Enter your Spotify `Client ID` and `Client Secret`, then click `Authorize with Spotify`.
+
+5. Make sure your Spotify app redirect URI is set to `https://127.0.0.1:3000/callback`.
 
 5. Complete Spotify authorization in the new tab.
 

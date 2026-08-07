@@ -1,20 +1,28 @@
 const express = require('express');
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 const path = require('path');
 const fs = require('fs').promises;
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
+const selfsigned = require('selfsigned');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const HTTP_PORT = process.env.HTTP_PORT || 3000;
+const HTTPS_PORT = process.env.HTTPS_PORT || 3001;
+const HOST = process.env.HOST || '0.0.0.0';
 const DATA_DIR = path.join(__dirname, 'data');
+const CERTS_DIR = path.join(__dirname, 'certs');
+const CERT_KEY_FILE = path.join(CERTS_DIR, 'server.key');
+const CERT_PEM_FILE = path.join(CERTS_DIR, 'server.crt');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
 
 const DEFAULT_CONFIG = {
   clientId: '',
   clientSecret: '',
-  redirectUri: `http://localhost:${PORT}/callback`,
+  redirectUri: `http://127.0.0.1:${HTTP_PORT}/callback`,
   refreshToken: '',
   alarm: {
     deviceId: '',
@@ -56,6 +64,61 @@ async function loadState() {
   await ensureStorage();
   config = await loadJson(CONFIG_FILE, DEFAULT_CONFIG);
   tokens = await loadJson(TOKENS_FILE, tokens);
+}
+
+async function generateCertFiles() {
+  const attrs = [{ name: 'commonName', value: '127.0.0.1' }];
+  const pems = selfsigned.generate(attrs, {
+    days: 365,
+    keySize: 2048,
+    algorithm: 'rsa',
+    extensions: [
+      {
+        name: 'subjectAltName',
+        altNames: [
+          { type: 2, value: '127.0.0.1' },
+          { type: 7, ip: '127.0.0.1' }
+        ]
+      }
+    ]
+  });
+  await fs.writeFile(CERT_KEY_FILE, pems.private, 'utf8');
+  await fs.writeFile(CERT_PEM_FILE, pems.cert, 'utf8');
+}
+
+async function loadCertFiles() {
+  const [key, cert] = await Promise.all([
+    fs.readFile(CERT_KEY_FILE, 'utf8'),
+    fs.readFile(CERT_PEM_FILE, 'utf8')
+  ]);
+  return { key, cert };
+}
+
+async function ensureCerts() {
+  await fs.mkdir(CERTS_DIR, { recursive: true });
+  let needsGeneration = false;
+  try {
+    await fs.access(CERT_KEY_FILE);
+    await fs.access(CERT_PEM_FILE);
+    const { key } = await loadCertFiles();
+    try {
+      const keyObject = crypto.createPrivateKey(key);
+      const modulusLength = keyObject.asymmetricKeyDetails?.modulusLength || 0;
+      if (modulusLength < 2048) {
+        needsGeneration = true;
+      }
+    } catch (error) {
+      needsGeneration = true;
+    }
+  } catch (error) {
+    needsGeneration = true;
+  }
+
+  if (needsGeneration) {
+    await generateCertFiles();
+  }
+
+  return loadCertFiles();
 }
 
 function buildAuthUrl() {
@@ -258,9 +321,15 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-loadState().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+loadState().then(async () => {
+  const { key, cert } = await ensureCerts();
+
+  http.createServer(app).listen(HTTP_PORT, HOST, () => {
+    console.log(`Server running at http://127.0.0.1:${HTTP_PORT} (bound to ${HOST})`);
+  });
+
+  https.createServer({ key, cert }, app).listen(HTTPS_PORT, HOST, () => {
+    console.log(`Secure server running at https://127.0.0.1:${HTTPS_PORT} (bound to ${HOST})`);
   });
 }).catch((error) => {
   console.error('Failed to initialize server:', error);
