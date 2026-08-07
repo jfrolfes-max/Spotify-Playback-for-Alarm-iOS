@@ -19,6 +19,8 @@ const CERT_PEM_FILE = path.join(CERTS_DIR, 'server.crt');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
 
+const KEEPALIVE_INTERVAL_MS = 60 * 1000;
+
 const DEFAULT_CONFIG = {
   clientId: '',
   clientSecret: '',
@@ -41,6 +43,7 @@ let tokens = {
   refreshToken: '',
   expiresAt: 0
 };
+let activeDeviceId = '';
 const outstandingStates = new Set();
 
 async function ensureStorage() {
@@ -182,6 +185,38 @@ async function spotifyRequest(method, url, options = {}) {
   return axios({ method, url, headers, ...options });
 }
 
+async function refreshActiveDevice() {
+  try {
+    const response = await spotifyRequest('GET', 'https://api.spotify.com/v1/me/player');
+    const device = response.data?.device;
+    if (device?.id) {
+      activeDeviceId = device.id;
+      if (!config.alarm.deviceId) {
+        config.alarm.deviceId = device.id;
+        await saveJson(CONFIG_FILE, config);
+      }
+    }
+    return activeDeviceId || null;
+  } catch (error) {
+    if (error.response?.status === 204 || error.response?.status === 404 || error.response?.status === 400) {
+      return null;
+    }
+    console.warn('Could not refresh active Spotify device:', error.message);
+    return null;
+  }
+}
+
+function resolvePlaybackDeviceId(explicitDeviceId) {
+  return explicitDeviceId || activeDeviceId || config.alarm.deviceId || '';
+}
+
+function startDeviceKeepalive() {
+  refreshActiveDevice().catch(() => {});
+  setInterval(() => {
+    refreshActiveDevice().catch(() => {});
+  }, KEEPALIVE_INTERVAL_MS);
+}
+
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -272,14 +307,21 @@ app.get('/api/devices', async (req, res) => {
 
 app.post('/api/play', async (req, res) => {
   const body = req.body || {};
-  const deviceId = body.deviceId || config.alarm.deviceId;
+  const requestedDeviceId = body.deviceId || config.alarm.deviceId;
   const contextUri = body.contextUri || config.alarm.contextUri;
   const trackUris = body.trackUris ? body.trackUris.split(',').map((uri) => uri.trim()).filter(Boolean) : (config.alarm.trackUris ? config.alarm.trackUris.split(',').map((uri) => uri.trim()).filter(Boolean) : []);
   const shuffle = body.shuffle ?? config.alarm.shuffle ?? false;
 
   try {
+    await refreshActiveDevice();
+    const deviceId = resolvePlaybackDeviceId(requestedDeviceId);
+
     if (typeof shuffle === 'boolean') {
-      await spotifyRequest('PUT', `https://api.spotify.com/v1/me/player/shuffle?state=${shuffle}`, { data: null });
+      const shuffleParams = new URLSearchParams({ state: String(shuffle) });
+      if (deviceId) {
+        shuffleParams.set('device_id', deviceId);
+      }
+      await spotifyRequest('PUT', `https://api.spotify.com/v1/me/player/shuffle?${shuffleParams.toString()}`, { data: null });
     }
 
     const playBody = {};
@@ -319,6 +361,7 @@ app.get('*', (req, res) => {
 
 loadState().then(async () => {
   const { key, cert } = await ensureCerts();
+  startDeviceKeepalive();
 
   http.createServer(app).listen(HTTP_PORT, HOST, () => {
     console.log(`Server running at http://127.0.0.1:${HTTP_PORT} (bound to ${HOST})`);
