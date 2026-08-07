@@ -6,6 +6,7 @@ Heads up, Spotify's background playback restrictions are pretty strict.
 
 This repo houses server infrastructure and web/helper app for pushing playback to an iOS device based on some user-set alarm preferences.
 
+[The UI will look like this](https://github.com/jfrolfes-max/Spotify-Playback-for-Alarm-iOS/blob/main/HEY%20CHECK%20THIS%20OUT.png)
 
 ## Features
 
