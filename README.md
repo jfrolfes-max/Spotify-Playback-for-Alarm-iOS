@@ -1,3 +1,7 @@
+
+Heck of a server setup just to realize the app is useless because of Spotify's super touchy background playback restrictions. If you're not already playing music on the device (or have the app open and on display), you can't push playback to the device...
+
+
 # Spotify-Autoplay-for-Alarm-iOS
 
 This repo hosts a local website and helper apps for connecting to Spotify, saving alarm preferences, and triggering playback on an iOS device.
